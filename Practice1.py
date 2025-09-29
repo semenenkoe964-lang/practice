@@ -38,7 +38,8 @@ for i in a:
         kp[i]+=1
     else:
         kp[i]=1
-print(sorted(kp.items())[:3])
+ss=sorted(kp.items())
+print(ss[len()-4:])
 
 n=int(input())
 p=[i for i in range(n+1)]
