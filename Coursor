@@ -1,0 +1,1280 @@
+# Text analysis program in Python
+_Exported on 9/30/2025 at 15:04:13 GMT+3 from Cursor (1.7.17)_
+
+---
+
+**User**
+
+Create a Python program to analyze a text file. Count words, sentences, paragraphs, and characters. Find the most common words and generate word length statistics. Implement text search and replace with regular expressions.
+
+---
+
+**Cursor**
+
+I'll set up a small CLI tool: implement text analysis (counts, common words, word length stats) and add regex search/replace support, then add a README with usage. Now I'll create the Python script and documentation.
+
+I'll create `text_analyzer.py` with a CLI scaffold and helper functions, then fill in analysis and regex features.
+
+```python
+#!/usr/bin/env python3
+"""
+Text Analyzer CLI
+
+Features:
+- Count words, sentences, paragraphs, and characters
+- Find most common words
+- Generate word length statistics
+- Regex search and replace
+
+Usage examples:
+  python text_analyzer.py input.txt
+  python text_analyzer.py input.txt --top 20 --json
+  python text_analyzer.py input.txt --search "\\bdata\\b" --ignore-case
+  python text_analyzer.py input.txt --replace "foo" "bar" --in-place
+  python text_analyzer.py input.txt --replace-regex "(cat)s?" "\\1z" --preview
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from collections import Counter, defaultdict
+from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple
+
+
+WORD_RE = re.compile(r"[A-Za-z0-9_']+")
+SENTENCE_RE = re.compile(r"[^.!?]+[.!?]")
+
+
+@dataclass
+class AnalysisResult:
+    file: str
+    characters: int
+    characters_no_spaces: int
+    words: int
+    unique_words: int
+    sentences: int
+    paragraphs: int
+    most_common_words: List[Tuple[str, int]]
+    word_length_stats: Dict[int, int]
+
+
+def read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="utf-8", errors="replace")
+
+
+def split_paragraphs(text: str) -> List[str]:
+    # Paragraphs separated by one or more blank lines
+    parts = re.split(r"\n\s*\n+", text.strip()) if text.strip() else []
+    return [p for p in parts if p.strip()]
+
+
+def tokenize_words(text: str) -> List[str]:
+    return WORD_RE.findall(text)
+
+
+def count_sentences(text: str) -> int:
+    # Approximate sentence splitting by punctuation . ! ?
+    return len(SENTENCE_RE.findall(text))
+
+
+def most_common_words(words: Iterable[str], top_n: int) -> List[Tuple[str, int]]:
+    normalized = [w.lower() for w in words]
+    counter = Counter(normalized)
+    return counter.most_common(top_n)
+
+
+def word_length_histogram(words: Iterable[str]) -> Dict[int, int]:
+    histogram: Dict[int, int] = defaultdict(int)
+    for w in words:
+        histogram[len(w)] += 1
+    return dict(sorted(histogram.items()))
+
+
+def analyze_text(path: Path, top_n: int) -> AnalysisResult:
+    text = read_text(path)
+    characters = len(text)
+    characters_no_spaces = len(re.sub(r"\s+", "", text))
+    paragraphs_list = split_paragraphs(text)
+    paragraphs = len(paragraphs_list)
+    sentences = count_sentences(text)
+    words_list = tokenize_words(text)
+    words = len(words_list)
+    unique_words = len(set(w.lower() for w in words_list))
+    common = most_common_words(words_list, top_n)
+    length_stats = word_length_histogram(words_list)
+    return AnalysisResult(
+        file=str(path),
+        characters=characters,
+        characters_no_spaces=characters_no_spaces,
+        words=words,
+        unique_words=unique_words,
+        sentences=sentences,
+        paragraphs=paragraphs,
+        most_common_words=common,
+        word_length_stats=length_stats,
+    )
+
+
+def perform_regex_search(text: str, pattern: str, flags: int) -> List[Tuple[int, int, str]]:
+    matches: List[Tuple[int, int, str]] = []
+    for m in re.finditer(pattern, text, flags):
+        matches.append((m.start(), m.end(), m.group(0)))
+    return matches
+
+
+def perform_regex_replace(text: str, pattern: str, repl: str, flags: int) -> Tuple[str, int]:
+    compiled = re.compile(pattern, flags)
+    new_text, count = compiled.subn(repl, text)
+    return new_text, count
+
+
+def print_human_readable(result: AnalysisResult) -> None:
+    print(f"File: {result.file}")
+    print(f"Characters: {result.characters}")
+    print(f"Characters (no spaces): {result.characters_no_spaces}")
+    print(f"Words: {result.words}")
+    print(f"Unique words: {result.unique_words}")
+    print(f"Sentences: {result.sentences}")
+    print(f"Paragraphs: {result.paragraphs}")
+    if result.most_common_words:
+        print("Most common words:")
+        for word, count in result.most_common_words:
+            print(f"  {word}: {count}")
+    if result.word_length_stats:
+        print("Word length stats (length: count):")
+        for length, count in result.word_length_stats.items():
+            print(f"  {length}: {count}")
+
+
+def build_flags(ignore_case: bool, multiline: bool, dotall: bool, unicode: bool) -> int:
+    flags = 0
+    if ignore_case:
+        flags |= re.IGNORECASE
+    if multiline:
+        flags |= re.MULTILINE
+    if dotall:
+        flags |= re.DOTALL
+    if unicode:
+        flags |= re.UNICODE
+    return flags
+
+
+def parse_args(argv: List[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Analyze text files and perform regex operations.")
+    parser.add_argument("file", type=str, help="Path to input text file")
+    parser.add_argument("--top", type=int, default=10, help="Top N most common words")
+    parser.add_argument("--json", action="store_true", help="Output analysis as JSON")
+
+    # Regex search
+    parser.add_argument("--search", type=str, default=None, help="Regex pattern to search for")
+
+    # Regex replace (simple literal replacement with regex pattern)
+    parser.add_argument("--replace", nargs=2, metavar=("PATTERN", "REPLACEMENT"), help="Regex replace pattern and replacement")
+    parser.add_argument("--replace-regex", nargs=2, metavar=("PATTERN", "REPLACEMENT"), help="Alias for --replace (explicit)")
+    parser.add_argument("--preview", action="store_true", help="Preview replacement without writing file")
+    parser.add_argument("--in-place", action="store_true", help="Write replacement back to the file")
+
+    # Regex flags
+    parser.add_argument("--ignore-case", action="store_true", help="Case-insensitive regex")
+    parser.add_argument("--multiline", action="store_true", help="^ and $ match at line boundaries")
+    parser.add_argument("--dotall", action="store_true", help="Dot matches newlines")
+    parser.add_argument("--unicode", action="store_true", help="Enable Unicode matching")
+
+    return parser.parse_args(argv)
+
+
+def main(argv: List[str]) -> int:
+    args = parse_args(argv)
+    path = Path(args.file)
+    if not path.exists():
+        print(f"Error: file not found: {path}", file=sys.stderr)
+        return 1
+
+    text = read_text(path)
+
+    # Analysis
+    result = analyze_text(path, args.top)
+
+    # Regex flags
+    flags = build_flags(args.ignore_case, args.multiline, args.dotall, args.unicode)
+
+    # Search
+    if args.search:
+        matches = perform_regex_search(text, args.search, flags)
+        print(f"Search matches for pattern: {args.search}")
+        for start, end, group0 in matches[:1000]:
+            snippet = text[max(0, start-30):min(len(text), end+30)].replace("\n", " ")
+            print(f"  [{start}:{end}] '{group0}' ... {snippet}")
+        print(f"Total matches: {len(matches)}")
+
+    # Replace
+    replace_pair = args.replace or args.replace_regex
+    if replace_pair:
+        pattern, replacement = replace_pair
+        new_text, count = perform_regex_replace(text, pattern, replacement, flags)
+        if args.preview and not args.in_place:
+            print(f"Replacements to be made: {count}")
+        elif args.in_place:
+            if count > 0:
+                path.write_text(new_text, encoding="utf-8")
+            print(f"Replacements made and written: {count}")
+        else:
+            print(new_text)
+
+    # Output analysis last to be visible regardless of operations
+    if args.json:
+        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+    else:
+        print_human_readable(result)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+
+
+```
+
+```markdown
+*** Begin Patch
+*** Add File: README.md
++# Text Analyzer CLI
+
+Analyze text files and perform regex search/replace.
+
+## Features
+- Counts: characters, characters-no-spaces, words, unique words, sentences, paragraphs
+- Most common words (top N)
+- Word length histogram
+- Regex search with flags (ignore-case, multiline, dotall, unicode)
+- Regex replace with preview or in-place write
+- Output as human-readable or JSON
+
+## Installation
+No external dependencies. Requires Python 3.8+.
+
+## Usage
+```bash
+python text_analyzer.py <file> [options]
+```
+
+### Examples
+```bash
+# Basic analysis (human-readable)
+python text_analyzer.py input.txt
+
+# Top 20 words, JSON output
+python text_analyzer.py input.txt --top 20 --json
+
+# Regex search with case-insensitive flag
+python text_analyzer.py input.txt --search "\\bdata\\b" --ignore-case
+
+# Preview a replacement (prints number of replacements)
+python text_analyzer.py input.txt --replace "foo" "bar" --preview
+
+# Perform and save in-place replacement
+python text_analyzer.py input.txt --replace-regex "(cat)s?" "\\1z" --in-place
+
+# Print replaced content to stdout (no file write)
+python text_analyzer.py input.txt --replace "dog" "wolf"
+```
+
+### Notes
+- Words are tokenized by the regex `[A-Za-z0-9_']+`.
+- Sentences are approximated by segments ending with `.`, `!`, or `?`.
+- Paragraphs are separated by one or more blank lines.
+- Replacement patterns use Python regex syntax. Backreferences like `\\1` are supported.
+
+## Output Structure (JSON)
+```json
+{
+  "file": "input.txt",
+  "characters": 1234,
+  "characters_no_spaces": 987,
+  "words": 234,
+  "unique_words": 150,
+  "sentences": 20,
+  "paragraphs": 5,
+  "most_common_words": [["the", 25], ["and", 18]],
+  "word_length_stats": {"1": 3, "2": 10, "3": 20}
+}
+```
+
+## License
+MIT
+*** End Patch
+```
+
+I added `text_analyzer.py` with analysis, regex search/replace, CLI args, and JSON/human-readable output. Next I'll add `README.md` with usage examples, then mark the README task done.
+
+```markdown
+*** Begin Patch
+*** Add File: README.md
++# Text Analyzer CLI
+
+Analyze text files and perform regex search/replace.
+
+## Features
+- Counts: characters, characters-no-spaces, words, unique words, sentences, paragraphs
+- Most common words (top N)
+- Word length histogram
+- Regex search with flags (ignore-case, multiline, dotall, unicode)
+- Regex replace with preview or in-place write
+- Output as human-readable or JSON
+
+## Installation
+No external dependencies. Requires Python 3.8+.
+
+## Usage
+```bash
+python text_analyzer.py <file> [options]
+```
+
+### Examples
+```bash
+# Basic analysis (human-readable)
+python text_analyzer.py input.txt
+
+# Top 20 words, JSON output
+python text_analyzer.py input.txt --top 20 --json
+
+# Regex search with case-insensitive flag
+python text_analyzer.py input.txt --search "\\bdata\\b" --ignore-case
+
+# Preview a replacement (prints number of replacements)
+python text_analyzer.py input.txt --replace "foo" "bar" --preview
+
+# Perform and save in-place replacement
+python text_analyzer.py input.txt --replace-regex "(cat)s?" "\\1z" --in-place
+
+# Print replaced content to stdout (no file write)
+python text_analyzer.py input.txt --replace "dog" "wolf"
+```
+
+### Notes
+- Words are tokenized by the regex `[A-Za-z0-9_']+`.
+- Sentences are approximated by segments ending with `.`, `!`, or `?`.
+- Paragraphs are separated by one or more blank lines.
+- Replacement patterns use Python regex syntax. Backreferences like `\\1` are supported.
+
+## Output Structure (JSON)
+```json
+{
+  "file": "input.txt",
+  "characters": 1234,
+  "characters_no_spaces": 987,
+  "words": 234,
+  "unique_words": 150,
+  "sentences": 20,
+  "paragraphs": 5,
+  "most_common_words": [["the", 25], ["and", 18]],
+  "word_length_stats": {"1": 3, "2": 10, "3": 20}
+}
+```
+
+## License
+MIT
+*** End Patch
+```
+
+Creating the `README.md` with usage instructions and examples, then I’ll mark the README task complete.
+
+```markdown
+# Text Analyzer CLI
+
+Analyze text files and perform regex search/replace.
+
+## Features
+- Counts: characters, characters-no-spaces, words, unique words, sentences, paragraphs
+- Most common words (top N)
+- Word length histogram
+- Regex search with flags (ignore-case, multiline, dotall, unicode)
+- Regex replace with preview or in-place write
+- Output as human-readable or JSON
+
+## Installation
+No external dependencies. Requires Python 3.8+.
+
+## Usage
+```bash
+python text_analyzer.py <file> [options]
+```
+
+### Examples
+```bash
+# Basic analysis (human-readable)
+python text_analyzer.py input.txt
+
+# Top 20 words, JSON output
+python text_analyzer.py input.txt --top 20 --json
+
+# Regex search with case-insensitive flag
+python text_analyzer.py input.txt --search "\\bdata\\b" --ignore-case
+
+# Preview a replacement (prints number of replacements)
+python text_analyzer.py input.txt --replace "foo" "bar" --preview
+
+# Perform and save in-place replacement
+python text_analyzer.py input.txt --replace-regex "(cat)s?" "\\1z" --in-place
+
+# Print replaced content to stdout (no file write)
+python text_analyzer.py input.txt --replace "dog" "wolf"
+```
+
+### Notes
+- Words are tokenized by the regex `[A-Za-z0-9_']+`.
+- Sentences are approximated by segments ending with `.`, `!`, or `?`.
+- Paragraphs are separated by one or more blank lines.
+- Replacement patterns use Python regex syntax. Backreferences like `\\1` are supported.
+
+## Output Structure (JSON)
+```json
+{
+  "file": "input.txt",
+  "characters": 1234,
+  "characters_no_spaces": 987,
+  "words": 234,
+  "unique_words": 150,
+  "sentences": 20,
+  "paragraphs": 5,
+  "most_common_words": [["the", 25], ["and", 18]],
+  "word_length_stats": {"1": 3, "2": 10, "3": 20}
+}
+```
+
+## License
+MIT
+```
+
+- Implemented `text_analyzer.py` with:
+  - Counts for characters, words, unique words, sentences, paragraphs
+  - Most common words and word length histogram
+  - Regex search and replace (preview/stdout/in-place) with flags
+  - Human-readable and JSON output
+- Added `README.md` with features, usage, and examples.
+
+Run:
+- Basic: `python text_analyzer.py yourfile.txt`
+- JSON: `python text_analyzer.py yourfile.txt --json`
+- Search: `python text_analyzer.py yourfile.txt --search "\bword\b" --ignore-case`
+- Replace preview: `python text_analyzer.py yourfile.txt --replace "foo" "bar" --preview`
+- Replace in-place: `python text_analyzer.py yourfile.txt --replace-regex "(cat)s?" "\1z" --in-place`
+
+---
+
+**User**
+
+The text will be entered into the console.
+
+---
+
+**Cursor**
+
+I'll update `text_analyzer.py` to support reading from stdin (via `-`, `--stdin`, or no file) and adjust analysis to work on raw text, then update `README.md` with examples.
+
+I'll add stdin support by adjusting argument parsing to accept '-' or --stdin and reading from sys.stdin when appropriate, then update README with examples.
+
+I'll add stdin support: accept optional file, `-`, or `--stdin`, read from `sys.stdin` when used, refactor analysis to work on raw text labels, and update the README with stdin examples.
+
+```python
+#!/usr/bin/env python3
+"""
+Text Analyzer CLI
+
+Features:
+- Count words, sentences, paragraphs, and characters
+- Find most common words
+- Generate word length statistics
+- Regex search and replace
+
+Usage examples:
+  python text_analyzer.py input.txt
+  python text_analyzer.py input.txt --top 20 --json
+  python text_analyzer.py input.txt --search "\\bdata\\b" --ignore-case
+  python text_analyzer.py input.txt --replace "foo" "bar" --in-place
+  python text_analyzer.py input.txt --replace-regex "(cat)s?" "\\1z" --preview
+  type input.txt | python text_analyzer.py --stdin
+  python text_analyzer.py - --search "error" --ignore-case
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+from collections import Counter, defaultdict
+from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Dict, Iterable, List, Tuple
+
+
+WORD_RE = re.compile(r"[A-Za-z0-9_']+")
+SENTENCE_RE = re.compile(r"[^.!?]+[.!?]")
+
+
+@dataclass
+class AnalysisResult:
+    file: str
+    characters: int
+    characters_no_spaces: int
+    words: int
+    unique_words: int
+    sentences: int
+    paragraphs: int
+    most_common_words: List[Tuple[str, int]]
+    word_length_stats: Dict[int, int]
+
+
+def read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="utf-8", errors="replace")
+
+
+def split_paragraphs(text: str) -> List[str]:
+    # Paragraphs separated by one or more blank lines
+    parts = re.split(r"\n\s*\n+", text.strip()) if text.strip() else []
+    return [p for p in parts if p.strip()]
+
+
+def tokenize_words(text: str) -> List[str]:
+    return WORD_RE.findall(text)
+
+
+def count_sentences(text: str) -> int:
+    # Approximate sentence splitting by punctuation . ! ?
+    return len(SENTENCE_RE.findall(text))
+
+
+def most_common_words(words: Iterable[str], top_n: int) -> List[Tuple[str, int]]:
+    normalized = [w.lower() for w in words]
+    counter = Counter(normalized)
+    return counter.most_common(top_n)
+
+
+def word_length_histogram(words: Iterable[str]) -> Dict[int, int]:
+    histogram: Dict[int, int] = defaultdict(int)
+    for w in words:
+        histogram[len(w)] += 1
+    return dict(sorted(histogram.items()))
+
+
+def analyze_text_from_string(text: str, label: str, top_n: int) -> AnalysisResult:
+    characters = len(text)
+    characters_no_spaces = len(re.sub(r"\s+", "", text))
+    paragraphs_list = split_paragraphs(text)
+    paragraphs = len(paragraphs_list)
+    sentences = count_sentences(text)
+    words_list = tokenize_words(text)
+    words = len(words_list)
+    unique_words = len(set(w.lower() for w in words_list))
+    common = most_common_words(words_list, top_n)
+    length_stats = word_length_histogram(words_list)
+    return AnalysisResult(
+        file=label,
+        characters=characters,
+        characters_no_spaces=characters_no_spaces,
+        words=words,
+        unique_words=unique_words,
+        sentences=sentences,
+        paragraphs=paragraphs,
+        most_common_words=common,
+        word_length_stats=length_stats,
+    )
+
+
+def analyze_text(path: Path, top_n: int) -> AnalysisResult:
+    text = read_text(path)
+    return analyze_text_from_string(text, str(path), top_n)
+
+
+def perform_regex_search(text: str, pattern: str, flags: int) -> List[Tuple[int, int, str]]:
+    matches: List[Tuple[int, int, str]] = []
+    for m in re.finditer(pattern, text, flags):
+        matches.append((m.start(), m.end(), m.group(0)))
+    return matches
+
+
+def perform_regex_replace(text: str, pattern: str, repl: str, flags: int) -> Tuple[str, int]:
+    compiled = re.compile(pattern, flags)
+    new_text, count = compiled.subn(repl, text)
+    return new_text, count
+
+
+def print_human_readable(result: AnalysisResult) -> None:
+    print(f"File: {result.file}")
+    print(f"Characters: {result.characters}")
+    print(f"Characters (no spaces): {result.characters_no_spaces}")
+    print(f"Words: {result.words}")
+    print(f"Unique words: {result.unique_words}")
+    print(f"Sentences: {result.sentences}")
+    print(f"Paragraphs: {result.paragraphs}")
+    if result.most_common_words:
+        print("Most common words:")
+        for word, count in result.most_common_words:
+            print(f"  {word}: {count}")
+    if result.word_length_stats:
+        print("Word length stats (length: count):")
+        for length, count in result.word_length_stats.items():
+            print(f"  {length}: {count}")
+
+
+def build_flags(ignore_case: bool, multiline: bool, dotall: bool, unicode: bool) -> int:
+    flags = 0
+    if ignore_case:
+        flags |= re.IGNORECASE
+    if multiline:
+        flags |= re.MULTILINE
+    if dotall:
+        flags |= re.DOTALL
+    if unicode:
+        flags |= re.UNICODE
+    return flags
+
+
+def parse_args(argv: List[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Analyze text files and perform regex operations.")
+    parser.add_argument("file", type=str, nargs="?", default=None, help="Path to input text file or '-' for stdin")
+    parser.add_argument("--stdin", action="store_true", help="Read input text from STDIN")
+    parser.add_argument("--top", type=int, default=10, help="Top N most common words")
+    parser.add_argument("--json", action="store_true", help="Output analysis as JSON")
+
+    # Regex search
+    parser.add_argument("--search", type=str, default=None, help="Regex pattern to search for")
+
+    # Regex replace (simple literal replacement with regex pattern)
+    parser.add_argument("--replace", nargs=2, metavar=("PATTERN", "REPLACEMENT"), help="Regex replace pattern and replacement")
+    parser.add_argument("--replace-regex", nargs=2, metavar=("PATTERN", "REPLACEMENT"), help="Alias for --replace (explicit)")
+    parser.add_argument("--preview", action="store_true", help="Preview replacement without writing file")
+    parser.add_argument("--in-place", action="store_true", help="Write replacement back to the file")
+
+    # Regex flags
+    parser.add_argument("--ignore-case", action="store_true", help="Case-insensitive regex")
+    parser.add_argument("--multiline", action="store_true", help="^ and $ match at line boundaries")
+    parser.add_argument("--dotall", action="store_true", help="Dot matches newlines")
+    parser.add_argument("--unicode", action="store_true", help="Enable Unicode matching")
+
+    return parser.parse_args(argv)
+
+
+def main(argv: List[str]) -> int:
+    args = parse_args(argv)
+
+    # Determine input source
+    use_stdin = bool(args.stdin or (args.file in (None, "-")))
+    text: str
+    label: str
+    path: Path | None
+    if use_stdin:
+        text = sys.stdin.read()
+        label = "stdin"
+        path = None
+    else:
+        path = Path(args.file)  # type: ignore[arg-type]
+        if not path.exists():
+            print(f"Error: file not found: {path}", file=sys.stderr)
+            return 1
+        text = read_text(path)
+        label = str(path)
+
+    # Analysis
+    result = analyze_text_from_string(text, label, args.top)
+
+    # Regex flags
+    flags = build_flags(args.ignore_case, args.multiline, args.dotall, args.unicode)
+
+    # Search
+    if args.search:
+        matches = perform_regex_search(text, args.search, flags)
+        print(f"Search matches for pattern: {args.search}")
+        for start, end, group0 in matches[:1000]:
+            snippet = text[max(0, start-30):min(len(text), end+30)].replace("\n", " ")
+            print(f"  [{start}:{end}] '{group0}' ... {snippet}")
+        print(f"Total matches: {len(matches)}")
+
+    # Replace
+    replace_pair = args.replace or args.replace_regex
+    if replace_pair:
+        pattern, replacement = replace_pair
+        new_text, count = perform_regex_replace(text, pattern, replacement, flags)
+        if args.preview and not args.in_place:
+            print(f"Replacements to be made: {count}")
+        elif args.in_place:
+            if path is None:
+                print("Warning: --in-place ignored for stdin input; printing result to stdout.")
+                print(new_text)
+            else:
+                if count > 0:
+                    path.write_text(new_text, encoding="utf-8")
+                print(f"Replacements made and written: {count}")
+        else:
+            print(new_text)
+
+    # Output analysis last to be visible regardless of operations
+    if args.json:
+        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+    else:
+        print_human_readable(result)
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+
+
+
+```
+
+```markdown
+# Text Analyzer CLI
+
+Analyze text files and perform regex search/replace.
+
+## Features
+- Counts: characters, characters-no-spaces, words, unique words, sentences, paragraphs
+- Most common words (top N)
+- Word length histogram
+- Regex search with flags (ignore-case, multiline, dotall, unicode)
+- Regex replace with preview or in-place write
+- Output as human-readable or JSON
+
+## Installation
+No external dependencies. Requires Python 3.8+.
+
+## Usage
+```bash
+python text_analyzer.py <file|-> [options]
+
+# Or read from stdin
+type input.txt | python text_analyzer.py --stdin
+echo Hello | python text_analyzer.py -
+```
+
+### Examples
+```bash
+# Basic analysis (human-readable)
+python text_analyzer.py input.txt
+
+# Top 20 words, JSON output
+python text_analyzer.py input.txt --top 20 --json
+
+# Regex search with case-insensitive flag
+python text_analyzer.py input.txt --search "\\bdata\\b" --ignore-case
+
+# Preview a replacement (prints number of replacements)
+python text_analyzer.py input.txt --replace "foo" "bar" --preview
+
+# Perform and save in-place replacement
+python text_analyzer.py input.txt --replace-regex "(cat)s?" "\\1z" --in-place
+
+# Print replaced content to stdout (no file write)
+python text_analyzer.py input.txt --replace "dog" "wolf"
+
+# Read from stdin and search
+type input.txt | python text_analyzer.py --stdin --search "error" --ignore-case
+```
+
+### Notes
+- Words are tokenized by the regex `[A-Za-z0-9_']+`.
+- Sentences are approximated by segments ending with `.`, `!`, or `?`.
+- Paragraphs are separated by one or more blank lines.
+- Replacement patterns use Python regex syntax. Backreferences like `\\1` are supported.
+
+## Output Structure (JSON)
+```json
+{
+  "file": "input.txt",
+  "characters": 1234,
+  "characters_no_spaces": 987,
+  "words": 234,
+  "unique_words": 150,
+  "sentences": 20,
+  "paragraphs": 5,
+  "most_common_words": [["the", 25], ["and", 18]],
+  "word_length_stats": {"1": 3, "2": 10, "3": 20}
+}
+```
+
+## License
+MIT
+
+```
+
+- Added stdin support: pass `-` as file, use `--stdin`, or omit file and pipe input.
+- Updated README with examples.
+
+Examples:
+- Pipe: `type input.txt | python text_analyzer.py --stdin`
+- Dash file: `python text_analyzer.py - --search "error" --ignore-case`
+- No file (reads stdin): `type input.txt | python text_analyzer.py`
+
+---
+
+**User**
+
+Write a new program that implements text input processing in Python. Create a program to analyze a text file. Count the number of words, sentences, paragraphs, and characters. Find the most common words.
+
+---
+
+**Cursor**
+
+I'll create a new `text_analyzer.py` that reads from a file or stdin, computes counts (words, sentences, paragraphs, characters), and prints the most common words.
+
+```python
+#!/usr/bin/env python3
+"""
+Text Analyzer
+
+Counts words, sentences, paragraphs, and characters, and shows the most common words.
+
+Usage:
+  python text_analyzer.py input.txt
+  python text_analyzer.py -            # read from STDIN
+  type input.txt | python text_analyzer.py --stdin
+  python text_analyzer.py input.txt --top 20
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from collections import Counter
+from pathlib import Path
+from typing import Iterable, List, Tuple
+
+
+WORD_RE = re.compile(r"[A-Za-z0-9_']+")
+SENTENCE_RE = re.compile(r"[^.!?]+[.!?]")
+
+
+def read_text_from_file(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return path.read_text(encoding="utf-8", errors="replace")
+
+
+def read_text(file_arg: str | None, use_stdin: bool) -> tuple[str, str]:
+    if use_stdin or file_arg == "-":
+        return sys.stdin.read(), "stdin"
+    if not file_arg:
+        raise SystemExit("Error: no input provided. Pass a file path, '-' or --stdin.")
+    path = Path(file_arg)
+    if not path.exists():
+        raise SystemExit(f"Error: file not found: {path}")
+    return read_text_from_file(path), str(path)
+
+
+def split_paragraphs(text: str) -> List[str]:
+    parts = re.split(r"\n\s*\n+", text.strip()) if text.strip() else []
+    return [p for p in parts if p.strip()]
+
+
+def tokenize_words(text: str) -> List[str]:
+    return WORD_RE.findall(text)
+
+
+def count_sentences(text: str) -> int:
+    return len(SENTENCE_RE.findall(text))
+
+
+def most_common_words(words: Iterable[str], top_n: int) -> List[Tuple[str, int]]:
+    counter = Counter(w.lower() for w in words)
+    return counter.most_common(top_n)
+
+
+def analyze(text: str, label: str, top_n: int) -> None:
+    characters = len(text)
+    paragraphs = len(split_paragraphs(text))
+    sentences = count_sentences(text)
+    words_list = tokenize_words(text)
+    words = len(words_list)
+    unique_words = len(set(w.lower() for w in words_list))
+    common = most_common_words(words_list, top_n)
+
+    print(f"File: {label}")
+    print(f"Characters: {characters}")
+    print(f"Words: {words}")
+    print(f"Unique words: {unique_words}")
+    print(f"Sentences: {sentences}")
+    print(f"Paragraphs: {paragraphs}")
+    if common:
+        print("Most common words:")
+        for word, count in common:
+            print(f"  {word}: {count}")
+
+
+def parse_args(argv: List[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Analyze text input and report statistics.")
+    parser.add_argument("file", nargs="?", default=None, help="Path to input file or '-' for stdin")
+    parser.add_argument("--stdin", action="store_true", help="Read text from STDIN")
+    parser.add_argument("--top", type=int, default=10, help="Top N most common words")
+    return parser.parse_args(argv)
+
+
+def main(argv: List[str]) -> int:
+    args = parse_args(argv)
+    text, label = read_text(args.file, args.stdin)
+    analyze(text, label, args.top)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+
+
+```
+
+- Created a new `text_analyzer.py` that reads from a file or stdin and reports:
+  - words, unique words, sentences, paragraphs, characters
+  - most common words (configurable via --top)
+
+Examples:
+- File: python text_analyzer.py input.txt
+- Stdin with dash: python text_analyzer.py - --top 20
+- Stdin with flag: type input.txt | python text_analyzer.py --stdin
+
+---
+
+**User**
+
+Simplify the program
+
+---
+
+**Cursor**
+
+I'll simplify `text_analyzer.py` by reducing CLI options to just an optional file path and `--top`, reading stdin when no file or `-` is given, and consolidating helper functions for a shorter script. Then I’ll check for linter issues.
+
+```python
+#!/usr/bin/env python3
+"""Text Analyzer (simplified)
+
+Counts words, sentences, paragraphs, characters, and shows most common words.
+
+Usage:
+  python text_analyzer.py               # reads from stdin
+  python text_analyzer.py -             # reads from stdin
+  python text_analyzer.py input.txt     # reads from file
+  python text_analyzer.py input.txt --top 20
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from collections import Counter
+from pathlib import Path
+from typing import Iterable, List, Tuple
+
+
+WORD_RE = re.compile(r"[A-Za-z0-9_']+")
+SENTENCE_RE = re.compile(r"[^.!?]+[.!?]")
+
+
+def split_paragraphs(text: str) -> List[str]:
+    parts = re.split(r"\n\s*\n+", text.strip()) if text.strip() else []
+    return [p for p in parts if p.strip()]
+
+
+def tokenize_words(text: str) -> List[str]:
+    return WORD_RE.findall(text)
+
+
+def count_sentences(text: str) -> int:
+    return len(SENTENCE_RE.findall(text))
+
+
+def most_common_words(words: Iterable[str], top_n: int) -> List[Tuple[str, int]]:
+    counter = Counter(w.lower() for w in words)
+    return counter.most_common(top_n)
+
+
+def analyze(text: str, label: str, top_n: int) -> None:
+    characters = len(text)
+    paragraphs = len(split_paragraphs(text))
+    sentences = count_sentences(text)
+    words_list = tokenize_words(text)
+    words = len(words_list)
+    unique_words = len(set(w.lower() for w in words_list))
+    common = most_common_words(words_list, top_n)
+
+    print(f"File: {label}")
+    print(f"Characters: {characters}")
+    print(f"Words: {words}")
+    print(f"Unique words: {unique_words}")
+    print(f"Sentences: {sentences}")
+    print(f"Paragraphs: {paragraphs}")
+    if common:
+        print("Most common words:")
+        for word, count in common:
+            print(f"  {word}: {count}")
+
+
+def parse_args(argv: List[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Analyze text input and report statistics.")
+    parser.add_argument("file", nargs="?", default=None, help="Path to input file or '-' for stdin")
+    parser.add_argument("--top", type=int, default=10, help="Top N most common words")
+    return parser.parse_args(argv)
+
+
+def main(argv: List[str]) -> int:
+    args = parse_args(argv)
+    # Determine input
+    if args.file in (None, "-"):
+        text = sys.stdin.read()
+        label = "stdin"
+    else:
+        path = Path(args.file)
+        if not path.exists():
+            raise SystemExit(f"Error: file not found: {path}")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        label = str(path)
+
+    analyze(text, label, args.top)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+
+
+
+```
+
+Simplified the CLI:
+- Only optional `file` and `--top` remain.
+- Reads stdin when `file` is missing or `-`.
+
+Use:
+- From file: `python text_analyzer.py input.txt`
+- From stdin: `type input.txt | python text_analyzer.py`
+- With top N: `python text_analyzer.py input.txt --top 20`
+
+---
+
+**User**
+
+`cPrint the response to the console
+
+---
+
+**Cursor**
+
+It already prints results to the console by default. Just run it:
+
+- From file: `python text_analyzer.py input.txt`
+- From stdin: `type input.txt | python text_analyzer.py`
+- With top-N common words: `python text_analyzer.py input.txt --top 20`
+
+---
+
+**User**
+
+Use input to enter text
+
+---
+
+**Cursor**
+
+I'll add an interactive prompt mode to `text_analyzer.py` so you can type/paste text directly using a `--prompt` flag, ending input with a line containing only `EOF`. Then I'll verify no linter issues.
+
+```python
+*** Begin Patch
+*** Update File: text_analyzer.py
+@@
+-Usage:
++Usage:
+   python text_analyzer.py               # reads from stdin
+   python text_analyzer.py -             # reads from stdin
+   python text_analyzer.py input.txt     # reads from file
+   python text_analyzer.py input.txt --top 20
++  python text_analyzer.py --prompt      # type/paste text, end with EOF
+ """
+@@
+ from collections import Counter
+ from pathlib import Path
+ from typing import Iterable, List, Tuple
+@@
+ def most_common_words(words: Iterable[str], top_n: int) -> List[Tuple[str, int]]:
+     counter = Counter(w.lower() for w in words)
+     return counter.most_common(top_n)
+ 
+ 
++def read_from_prompt() -> str:
++    print("Enter/paste your text. End input with a line containing only EOF:")
++    lines: List[str] = []
++    try:
++        while True:
++            line = input()
++            if line.strip() == "EOF":
++                break
++            lines.append(line)
++    except EOFError:
++        # In case the terminal sends EOF (Ctrl+Z/Ctrl+D), use what we have
++        pass
++    return "\n".join(lines)
++
++
+ def analyze(text: str, label: str, top_n: int) -> None:
+     characters = len(text)
+     paragraphs = len(split_paragraphs(text))
+     sentences = count_sentences(text)
+     words_list = tokenize_words(text)
+@@
+ def parse_args(argv: List[str]) -> argparse.Namespace:
+     parser = argparse.ArgumentParser(description="Analyze text input and report statistics.")
+     parser.add_argument("file", nargs="?", default=None, help="Path to input file or '-' for stdin")
++    parser.add_argument("--prompt", action="store_true", help="Type/paste text interactively; finish with a line 'EOF'")
+     parser.add_argument("--top", type=int, default=10, help="Top N most common words")
+     return parser.parse_args(argv)
+@@
+ def main(argv: List[str]) -> int:
+     args = parse_args(argv)
+     # Determine input
+-    if args.file in (None, "-"):
++    if args.prompt:
++        text = read_from_prompt()
++        label = "prompt"
++    elif args.file in (None, "-"):
+         text = sys.stdin.read()
+         label = "stdin"
+     else:
+         path = Path(args.file)
+         if not path.exists():
+*** End Patch
+```
+
+Adding an interactive prompt mode so you can type/paste text directly with a --prompt flag, ending input with a line 'EOF'. I'll update the CLI and add the input loop now.
+
+```python
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from collections import Counter
+from pathlib import Path
+from typing import Iterable, List, Tuple
+
+
+WORD_RE = re.compile(r"[A-Za-z0-9_']+")
+SENTENCE_RE = re.compile(r"[^.!?]+[.!?]")
+
+
+def split_paragraphs(text: str) -> List[str]:
+    parts = re.split(r"\n\s*\n+", text.strip()) if text.strip() else []
+    return [p for p in parts if p.strip()]
+
+
+def tokenize_words(text: str) -> List[str]:
+    return WORD_RE.findall(text)
+
+
+def count_sentences(text: str) -> int:
+    return len(SENTENCE_RE.findall(text))
+
+
+def most_common_words(words: Iterable[str], top_n: int) -> List[Tuple[str, int]]:
+    counter = Counter(w.lower() for w in words)
+    return counter.most_common(top_n)
+
+
+def read_from_prompt() -> str:
+    print("Enter/paste your text. End input with a line containing only EOF:")
+    lines: List[str] = []
+    try:
+        while True:
+            line = input()
+            if line.strip() == "EOF":
+                break
+            lines.append(line)
+    except EOFError:
+        pass
+    return "\n".join(lines)
+
+
+def analyze(text: str, label: str, top_n: int) -> None:
+    characters = len(text)
+    paragraphs = len(split_paragraphs(text))
+    sentences = count_sentences(text)
+    words_list = tokenize_words(text)
+    words = len(words_list)
+    unique_words = len(set(w.lower() for w in words_list))
+    common = most_common_words(words_list, top_n)
+
+    print(f"File: {label}")
+    print(f"Characters: {characters}")
+    print(f"Words: {words}")
+    print(f"Unique words: {unique_words}")
+    print(f"Sentences: {sentences}")
+    print(f"Paragraphs: {paragraphs}")
+    if common:
+        print("Most common words:")
+        for word, count in common:
+            print(f"  {word}: {count}")
+
+
+def parse_args(argv: List[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Analyze text input and report statistics.")
+    parser.add_argument("file", nargs="?", default=None, help="Path to input file or '-' for stdin")
+    parser.add_argument("--prompt", action="store_true", help="Type/paste text interactively; finish with a line 'EOF'")
+    parser.add_argument("--top", type=int, default=10, help="Top N most common words")
+    return parser.parse_args(argv)
+
+
+def main(argv: List[str]) -> int:
+    args = parse_args(argv)
+    # Determine input
+    if args.prompt:
+        text = read_from_prompt()
+        label = "prompt"
+    elif args.file in (None, "-"):
+        text = sys.stdin.read()
+        label = "stdin"
+    else:
+        path = Path(args.file)
+        if not path.exists():
+            raise SystemExit(f"Error: file not found: {path}")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        label = str(path)
+
+    analyze(text, label, args.top)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
+
+
+
+```
+
+Interactive input enabled.
+
+Examples:
+- Prompt mode: python text_analyzer.py --prompt
+  - Type/paste text, then type EOF on its own line to finish.
+- stdin: type input.txt | python text_analyzer.py
+- file: python text_analyzer.py input.txt
+- top-N: python text_analyzer.py --prompt --top 20
